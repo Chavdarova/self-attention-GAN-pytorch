@@ -120,10 +120,6 @@ class Trainer(object):
 
         # Fixed noise for sampling from G
         fixed_noise = torch.randn(self.batch_size, self.z_dim, device=self.device)
-        if self.num_of_classes < self.batch_size:
-            fixed_labels = torch.from_numpy(np.tile(np.arange(self.num_of_classes), self.batch_size//self.num_of_classes + 1)[:self.batch_size]).to(self.device)
-        else:
-            fixed_labels = torch.from_numpy(np.arange(self.batch_size)).to(self.device)
 
         # For gan loss
         label = torch.full((self.batch_size,), 1, device=self.device)
@@ -164,11 +160,11 @@ class Trainer(object):
                 # TRAIN with REAL
 
                 # Get real images & real labels
-                real_images, real_labels = self.get_real_samples()
+                real_images = self.get_real_samples()
 
                 # Get D output for real images & real labels
                 inst_noise = torch.normal(mean=inst_noise_mean, std=inst_noise_std).to(self.device)
-                d_out_real = self.D(real_images + inst_noise, real_labels)
+                d_out_real = self.D(real_images + inst_noise)
 
                 # Compute D loss with real images & real labels
                 if self.adv_loss == 'hinge':
@@ -188,11 +184,11 @@ class Trainer(object):
                 z = torch.randn(self.batch_size, self.z_dim, device=self.device)
 
                 # Generate fake images for same real labels
-                fake_images = self.G(z, real_labels)
+                fake_images = self.G(z)
 
                 # Get D output for fake images & same real labels
                 inst_noise = torch.normal(mean=inst_noise_mean, std=inst_noise_std).to(self.device)
-                d_out_fake = self.D(fake_images.detach() + inst_noise, real_labels)
+                d_out_fake = self.D(fake_images.detach() + inst_noise)
 
                 # Compute D loss with fake images & real labels
                 if self.adv_loss == 'hinge':
@@ -208,7 +204,7 @@ class Trainer(object):
 
                 # If WGAN_GP, compute GP and add to D loss
                 if self.adv_loss == 'wgan_gp':
-                    d_loss_gp = self.lambda_gp * self.compute_gradient_penalty(real_images, real_labels, fake_images.detach())
+                    d_loss_gp = self.lambda_gp * self.compute_gradient_penalty(real_images, fake_images.detach())
                     d_loss_gp.backward()
 
                 # Optimize
@@ -222,17 +218,17 @@ class Trainer(object):
                 self.reset_grad()
 
                 # Get real images & real labels (only need real labels)
-                real_images, real_labels = self.get_real_samples()
+                real_images = self.get_real_samples()
 
                 # Create random noise
                 z = torch.randn(self.batch_size, self.z_dim).to(self.device)
 
                 # Generate fake images for same real labels
-                fake_images = self.G(z, real_labels)
+                fake_images = self.G(z)
 
                 # Get D output for fake images & same real labels
                 inst_noise = torch.normal(mean=inst_noise_mean, std=inst_noise_std).to(self.device)
-                g_out_fake = self.D(fake_images + inst_noise, real_labels)
+                g_out_fake = self.D(fake_images + inst_noise)
 
                 # Compute G loss with fake images & real labels
                 if self.adv_loss == 'dcgan':
@@ -272,7 +268,7 @@ class Trainer(object):
 
             # Sample images
             if self.step % self.sample_step == 0:
-                fake_images = self.G(fixed_noise, fixed_labels)
+                fake_images = self.G(fixed_noise)
                 sample_images = utils.denorm(fake_images.detach()[:self.save_n_images])
                 # Save batch images
                 vutils.save_image(sample_images, os.path.join(self.sample_path, 'fake_{:05d}.png'.format(self.step)))
@@ -285,8 +281,8 @@ class Trainer(object):
                 utils.save_ckpt(self)
 
     def build_models(self):
-        self.G = Generator(self.z_dim, self.g_conv_dim, self.num_of_classes).to(self.device)
-        self.D = Discriminator(self.d_conv_dim, self.num_of_classes).to(self.device)
+        self.G = Generator(self.z_dim, self.g_conv_dim).to(self.device)
+        self.D = Discriminator(self.d_conv_dim).to(self.device)
         if 'cuda' in self.device.type and self.parallel:
             self.G = nn.DataParallel(self.G)
             self.D = nn.DataParallel(self.D)
@@ -306,13 +302,13 @@ class Trainer(object):
 
     def get_real_samples(self):
         try:
-            real_images, real_labels = next(self.data_iter)
+            real_images = next(self.data_iter)
         except:
             self.data_iter = iter(self.dataloader)
-            real_images, real_labels = next(self.data_iter)
+            real_images = next(self.data_iter)
 
-        real_images, real_labels = real_images.to(self.device), real_labels.to(self.device)
-        return real_images, real_labels
+        real_images = real_images.to(self.device)
+        return real_images
 
     def compute_gradient_penalty(self, real_images, real_labels, fake_images):
         # Compute gradient penalty

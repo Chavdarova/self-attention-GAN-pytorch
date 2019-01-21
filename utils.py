@@ -34,7 +34,7 @@ def copy_scripts(dst):
         shutil.copy(file, dst)
 
 
-def make_transform(resize=True, imsize=128, centercrop=False, centercrop_size=128, totensor=True, tanh_scale=True, normalize=False):
+def make_transform(resize=True, imsize=128, centercrop=False, centercrop_size=128, totensor=True, tanh_scale=False, normalize=False):
         options = []
         if resize:
             options.append(transforms.Resize((imsize, imsize)))
@@ -69,8 +69,12 @@ def make_dataloader(batch_size, dataset_type, data_path, shuffle=True, num_worke
         num_of_classes = 1
     elif dataset_type == 'cifar10':
         assert os.path.exists(data_path), "data_path does not exist! Given: " + data_path
-        dataset = dset.CIFAR10(root=data_path, download=True, transform=transform)
+        dataset = dset.CIFAR10(root=data_path, download=True, transform=transform, attributes=[])
         num_of_classes = 10
+    elif dataset_type == 'celeba':
+        import celeba_dataset
+        dataset = celeba_dataset.CelebADataset(root=data_path, transforms_=transform, attributes=[])
+        num_of_classes = -1
     elif dataset_type == 'fake':
         dataset = dset.FakeData(image_size=(3, centercrop_size, centercrop_size), transform=transforms.ToTensor())
         num_of_classes = 10

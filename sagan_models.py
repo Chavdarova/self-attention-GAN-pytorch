@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch.nn.utils import spectral_norm
+#from spectral_normalization import SpectralNorm as spectral_norm
 from torch.nn.init import xavier_uniform_
 
 
@@ -71,7 +72,7 @@ class Self_Attn(nn.Module):
         out = x + self.sigma*attn_g
         return out
 
-
+'''
 class ConditionalBatchNorm2d(nn.Module):
     # https://github.com/pytorch/pytorch/issues/8985#issuecomment-405080775
     def __init__(self, num_features, num_classes):
@@ -88,30 +89,34 @@ class ConditionalBatchNorm2d(nn.Module):
         gamma, beta = self.embed(y).chunk(2, 1)
         out = gamma.view(-1, self.num_features, 1, 1) * out + beta.view(-1, self.num_features, 1, 1)
         return out
-
+'''
 
 class GenBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, num_classes):
+    def __init__(self, in_channels, out_channels, upsample=True):
         super(GenBlock, self).__init__()
-        self.cond_bn1 = ConditionalBatchNorm2d(in_channels, num_classes)
+        #self.cond_bn1 = ConditionalBatchNorm2d(in_channels, num_classes)
+        self.bn1 = nn.BatchNorm2d(in_channels)
         self.relu = nn.ReLU(inplace=True)
         self.snconv2d1 = snconv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1)
-        self.cond_bn2 = ConditionalBatchNorm2d(out_channels, num_classes)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        #self.cond_bn2 = ConditionalBatchNorm2d(out_channels, num_classes)
         self.snconv2d2 = snconv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1)
         self.snconv2d0 = snconv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1, padding=0)
+        self.upsample = upsample
 
-    def forward(self, x, labels):
+    def forward(self, x):
         x0 = x
 
-        x = self.cond_bn1(x, labels)
+        x = self.bn1(x)
         x = self.relu(x)
-        x = F.interpolate(x, scale_factor=2, mode='nearest') # upsample
+        if self.upsample:
+            x = F.interpolate(x, scale_factor=2, mode='nearest') # upsample
         x = self.snconv2d1(x)
-        x = self.cond_bn2(x, labels)
+        x = self.bn2(x)
         x = self.relu(x)
         x = self.snconv2d2(x)
-
-        x0 = F.interpolate(x0, scale_factor=2, mode='nearest') # upsample
+        if self.upsample:
+            x0 = F.interpolate(x0, scale_factor=2, mode='nearest') # upsample
         x0 = self.snconv2d0(x0)
 
         out = x + x0
@@ -121,18 +126,18 @@ class GenBlock(nn.Module):
 class Generator(nn.Module):
     """Generator."""
 
-    def __init__(self, z_dim, g_conv_dim, num_classes):
+    def __init__(self, z_dim, g_conv_dim):
         super(Generator, self).__init__()
 
         self.z_dim = z_dim
         self.g_conv_dim = g_conv_dim
         self.snlinear0 = snlinear(in_features=z_dim, out_features=g_conv_dim*16*4*4)
-        self.block1 = GenBlock(g_conv_dim*16, g_conv_dim*16, num_classes)
-        self.block2 = GenBlock(g_conv_dim*16, g_conv_dim*8, num_classes)
-        self.block3 = GenBlock(g_conv_dim*8, g_conv_dim*4, num_classes)
+        self.block1 = GenBlock(g_conv_dim*16, g_conv_dim*16)
+        self.block2 = GenBlock(g_conv_dim*16, g_conv_dim*8)
+        self.block3 = GenBlock(g_conv_dim*8, g_conv_dim*4)
         self.self_attn = Self_Attn(g_conv_dim*4)
-        self.block4 = GenBlock(g_conv_dim*4, g_conv_dim*2, num_classes)
-        self.block5 = GenBlock(g_conv_dim*2, g_conv_dim, num_classes)
+        self.block4 = GenBlock(g_conv_dim*4, g_conv_dim*2)
+        self.block5 = GenBlock(g_conv_dim*2, g_conv_dim, upsample=False)
         self.bn = nn.BatchNorm2d(g_conv_dim, eps=1e-5, momentum=0.9999)
         self.relu = nn.ReLU(inplace=True)
         self.snconv2d1 = snconv2d(in_channels=g_conv_dim, out_channels=3, kernel_size=3, stride=1, padding=1)
@@ -141,15 +146,15 @@ class Generator(nn.Module):
         # Weight init
         self.apply(init_weights)
 
-    def forward(self, z, labels):
+    def forward(self, z):
         act0 = self.snlinear0(z)
         act0 = act0.view(-1, self.g_conv_dim*16, 4, 4)
-        act1 = self.block1(act0, labels)
-        act2 = self.block2(act1, labels)
-        act3 = self.block3(act2, labels)
+        act1 = self.block1(act0)
+        act2 = self.block2(act1)
+        act3 = self.block3(act2)
         act3 = self.self_attn(act3)
-        act4 = self.block4(act3, labels)
-        act5 = self.block5(act4, labels)
+        act4 = self.block4(act3)
+        act5 = self.block5(act4)
         act5 = self.bn(act5)
         act5 = self.relu(act5)
         act6 = self.snconv2d1(act5)
@@ -216,7 +221,7 @@ class DiscBlock(nn.Module):
 class Discriminator(nn.Module):
     """Discriminator."""
 
-    def __init__(self, d_conv_dim, num_classes):
+    def __init__(self, d_conv_dim):
         super(Discriminator, self).__init__()
         self.d_conv_dim = d_conv_dim
         self.opt_block1 = DiscOptBlock(3, d_conv_dim)
@@ -228,13 +233,12 @@ class Discriminator(nn.Module):
         self.block5 = DiscBlock(d_conv_dim*16, d_conv_dim*16)
         self.relu = nn.ReLU(inplace=True)
         self.snlinear1 = snlinear(in_features=d_conv_dim*16, out_features=1)
-        self.sn_embedding1 = sn_embedding(num_classes, d_conv_dim*16)
 
         # Weight init
         self.apply(init_weights)
-        xavier_uniform_(self.sn_embedding1.weight)
+        #xavier_uniform_(self.sn_embedding1.weight)
 
-    def forward(self, x, labels):
+    def forward(self, x):
         h0 = self.opt_block1(x)
         h1 = self.block1(h0)
         h1 = self.self_attn(h1)
@@ -244,11 +248,5 @@ class Discriminator(nn.Module):
         h5 = self.block5(h4, downsample=False)
         h5 = self.relu(h5)
         h6 = torch.sum(h5, dim=[2,3])
-        output1 = torch.squeeze(self.snlinear1(h6))
-        # Projection
-        h_labels = self.sn_embedding1(labels)
-        proj = torch.mul(h6, h_labels)
-        output2 = torch.sum(proj, dim=[1])
-        # Out
-        output = output1 + output2
+        output = torch.squeeze(self.snlinear1(h6))
         return output
